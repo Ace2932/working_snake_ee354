@@ -8,15 +8,17 @@ module snake_game (
     input      [14:0]  acl_data,     // accelerometer sample (X,Y,Z packed)
     input      [9:0]   hCount,       // horizontal pixel counter
     input      [9:0]   vCount,       // vertical pixel counter
-    output reg [11:0]  rgb           // 12-bit packed RGB (4:4:4)
+    output reg [11:0]  rgb,          // 12-bit packed RGB (4:4:4)
+    output reg [15:0]  score         // score for 7-seg display
 );
 
     localparam integer GRID_WIDTH        = 16;
     localparam integer GRID_HEIGHT       = 16;
     localparam integer CELL_WIDTH        = 40;
     localparam integer CELL_HEIGHT       = 30;
-    localparam integer STEP_INTERVAL     = 100_000_000; // 1 second @ 100 MHz
+    localparam integer STEP_INTERVAL     = 50_000_000; // 0.5 second @ 100 MHz
     localparam integer MAX_SNAKE_CELLS   = GRID_WIDTH * GRID_HEIGHT;
+    localparam [15:0] SCORE_MAX          = 16'h9999;
 
     localparam [11:0] COLOR_BACKGROUND   = 12'h118;
     localparam [11:0] COLOR_GRID         = 12'h333;
@@ -55,7 +57,7 @@ module snake_game (
     wire choose_vertical   = vertical_valid   && (!horizontal_valid || abs_vertical > abs_horizontal);
 
     wire [1:0] dir_horizontal = tilt_horizontal[5] ? DIR_RIGHT : DIR_LEFT; // sign bit mirrors Dodo Jump mapping
-    wire [1:0] dir_vertical   = tilt_vertical[5]   ? DIR_DOWN  : DIR_UP;
+    wire [1:0] dir_vertical   = tilt_vertical[5]   ? DIR_UP    : DIR_DOWN;
 
     wire candidate_valid = choose_horizontal || choose_vertical;
     wire [1:0] candidate_dir = choose_horizontal ? dir_horizontal :
@@ -82,6 +84,33 @@ module snake_game (
             lfsr_advance = {current[6:0], current[7] ^ current[5] ^ current[4] ^ current[3]};
             if (lfsr_advance == 8'b0)
                 lfsr_advance = 8'h1D; // avoid lock-up at zero
+        end
+    endfunction
+
+    function automatic [15:0] bcd_increment;
+        input [15:0] value;
+        reg [15:0] tmp;
+        begin
+            tmp = value;
+            if (value != 16'h9999) begin
+                if (tmp[3:0] == 4'h9) begin
+                    tmp[3:0] = 4'h0;
+                    if (tmp[7:4] == 4'h9) begin
+                        tmp[7:4] = 4'h0;
+                        if (tmp[11:8] == 4'h9) begin
+                            tmp[11:8] = 4'h0;
+                            tmp[15:12] = tmp[15:12] + 4'h1;
+                        end else begin
+                            tmp[11:8] = tmp[11:8] + 4'h1;
+                        end
+                    end else begin
+                        tmp[7:4] = tmp[7:4] + 4'h1;
+                    end
+                end else begin
+                    tmp[3:0] = tmp[3:0] + 4'h1;
+                end
+            end
+            bcd_increment = tmp;
         end
     endfunction
 
@@ -207,12 +236,14 @@ module snake_game (
             fruit_y      <= 4'd8;
             fruit_pending <= 1'b0;
             lfsr_state   <= (acl_data[7:0] != 8'b0) ? acl_data[7:0] : 8'hA5;
+            score        <= 16'h0000;
         end else if (button_pulse) begin
             initialise_snake();
             dir_current  <= DIR_RIGHT;
             game_over    <= 1'b0;
             fruit_pending <= 1'b1;
             lfsr_state   <= lfsr_advance((acl_data[7:0] != 8'b0) ? acl_data[7:0] : 8'h5A);
+            score        <= 16'h0000;
         end else begin
             if (!game_over && step_tick) begin
                 if (border_collision || self_collision) begin
@@ -230,6 +261,8 @@ module snake_game (
                     if (will_grow && snake_length < MAX_SNAKE_CELLS) begin
                         snake_length <= snake_length + 1'b1;
                         fruit_pending <= 1'b1;
+                        if (score != SCORE_MAX)
+                            score <= bcd_increment(score);
                     end
 
                     dir_current <= dir_request;
