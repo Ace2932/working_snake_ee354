@@ -47,7 +47,7 @@ module merged_top(
         .acl_data(acl_data)
     );
 
-    // Display accelerometer data on 7-segment display
+    // Display score on 7-segment display
     wire [15:0] score;
 
     seg7_control sseg (
